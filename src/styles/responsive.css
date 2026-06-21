@@ -1,0 +1,47 @@
+/* Responsive */
+@media (max-width: 1200px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    /* Sidebar is an off-canvas drawer on mobile (rules live in components.css) */
+
+    .main {
+        padding: 20px;
+    }
+
+    .header h1 {
+        font-size: 24px;
+    }
+
+    .topbar { padding: 12px 20px; gap: 12px; }
+    .topbar-search { display: none; }
+    .topbar-crumb { display: none; }
+    .tb-user-meta { display: none; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+    .kpi-row { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+    .main { padding: 16px; }
+    .card { padding: 20px; }
+    .header h1 { font-size: 20px; }
+    .modal-foot { flex-direction: column-reverse; }
+    .modal-foot .btn { width: 100%; }
+    .tabs { gap: 6px; }
+    .tab-btn { padding: 8px 12px; font-size: 12px; }
+    .routes-grid .route-stats { grid-template-columns: 1fr; }
+    .topbar-title h2 { font-size: 17px; }
+    /* Stack the two-up selects in the trip planner */
+    .card [style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
+}
+
+/* Tablet: KPI rows to 2 columns */
+@media (max-width: 900px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+}

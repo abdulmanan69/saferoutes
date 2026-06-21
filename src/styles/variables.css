@@ -1,0 +1,76 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    /* Dark violet design system (reference: modern dark fintech UI) */
+    --primary: #7c5cfc;
+    --secondary: #6d28d9;
+    --accent: #a78bfa;
+    --danger: #f87171;
+    --warning: #fbbf24;
+    --success: #34d399;
+
+    /* NOTE: --dark is the PRIMARY TEXT color (legacy name kept for compat) */
+    --dark: #eef1fb;
+    --text: #c6cce2;
+    --muted: #8b93b0;
+
+    --card: #232838;      /* surface */
+    --panel: #1a1e2c;     /* sidebar / deep surface */
+    --light: #2c3247;     /* inner boxes, inputs, hovers */
+    --border: #383f5c;
+
+    --app-bg: linear-gradient(135deg, #15182a 0%, #241d3f 100%);
+    --radius: 22px;
+
+    /* Layering scale — everything stacks predictably.
+       Leaflet's internal panes use 200–700, so maps are isolated (below)
+       and all chrome sits above 900. */
+    --z-topbar: 900;
+    --z-dropdown: 950;
+    --z-popover: 960;
+    --z-modal: 1000;
+    --z-toast: 1100;
+}
+
+body {
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--app-bg);
+    background-attachment: fixed;
+    min-height: 100vh;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* CRITICAL overlap fix: Leaflet panes use z-index 200–700 internally, which
+   otherwise float above the topbar, dropdowns and modals while scrolling.
+   `isolation` traps all of that inside the map box. */
+.leaflet-container {
+    isolation: isolate;
+    z-index: 0;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* Slim, themed scrollbars */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); }
+
+/* Dark form controls everywhere */
+select option { background: var(--card); color: var(--dark); }
+textarea {
+    background: var(--light) !important;
+    color: var(--dark) !important;
+    border-color: var(--border) !important;
+}
+::placeholder { color: var(--muted); opacity: 0.8; }
+
+/* Rounded display font for headings & buttons (reference look) */
+h1, h2, h3, .logo, .btn, .tab-btn, .stat-value, .outfit-temp {
+    font-family: 'Quicksand', 'Inter', 'Segoe UI', sans-serif;
+    letter-spacing: 0.2px;
+}
