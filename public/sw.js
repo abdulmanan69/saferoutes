@@ -1,5 +1,30 @@
-/* SafeRoute service worker — app-shell caching for offline/PWA support. */
-const CACHE = 'saferoute-v2';
+/* SafeRoute service worker — app-shell caching + Web Push for offline/PWA support. */
+const CACHE = 'saferoute-v3';
+
+/* Web Push: fires even when the app is closed (Android/desktop; iOS 16.4+ installed PWA). */
+self.addEventListener('push', (e) => {
+    let data = {};
+    try { data = e.data.json(); } catch { data = { title: 'SafeRoute', body: e.data?.text() || '' }; }
+    e.waitUntil(self.registration.showNotification(data.title || 'SafeRoute', {
+        body: data.body || '',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        vibrate: [200, 100, 200],
+        tag: data.tag || 'saferoute',
+        data: { url: data.url || '/rides' }
+    }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+    e.notification.close();
+    const url = e.notification.data?.url || '/rides';
+    e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+        for (const c of list) {
+            if ('focus' in c) { c.navigate(url); return c.focus(); }
+        }
+        return clients.openWindow(url);
+    }));
+});
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('message', (e) => {

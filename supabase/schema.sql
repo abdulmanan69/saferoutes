@@ -101,6 +101,21 @@ CREATE TABLE IF NOT EXISTS public.ride_messages (
 );
 CREATE INDEX IF NOT EXISTS ride_messages_ride_idx ON public.ride_messages(ride_id, created_at);
 
+-- 7. Web Push subscriptions (background notifications when the app is closed)
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS push_subs_user_idx ON public.push_subscriptions(user_id);
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "push_subs_own" ON public.push_subscriptions;
+CREATE POLICY "push_subs_own" ON public.push_subscriptions FOR ALL
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS trips_user_id_idx ON public.trips(user_id);
 CREATE INDEX IF NOT EXISTS trips_created_at_idx ON public.trips(created_at DESC);

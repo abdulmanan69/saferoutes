@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
+import { RideLiveProvider } from './context/RideLiveContext';
 import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute/ProtectedRoute';
 import Sidebar from './components/Sidebar/Sidebar';
 import Topbar from './components/Topbar/Topbar';
@@ -58,6 +59,7 @@ function App() {
             <ThemeProvider>
                 <AuthProvider>
                     <ToastProvider>
+                        <RideLiveProvider>
                         <Routes>
                     {/* Public routes */}
                     <Route path="/login" element={<Login />} />
@@ -92,6 +94,7 @@ function App() {
                         </Route>
                     </Route>
                         </Routes>
+                        </RideLiveProvider>
                     </ToastProvider>
                 </AuthProvider>
             </ThemeProvider>

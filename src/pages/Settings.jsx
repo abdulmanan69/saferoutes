@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
 import { ConfirmDialog } from '../components/Modal/Modal';
+import { pushSupported, getPushSubscription, enablePush, disablePush } from '../utils/push';
 
 const defaultSettings = {
     language: 'English (UK)',
@@ -54,6 +55,29 @@ const Settings = () => {
     const [pwdSaving, setPwdSaving] = useState(false);
     const [confirmDel, setConfirmDel] = useState(false);
     const [deleting, setDeleting] = useState(false);
+
+    // Background push notifications
+    const [pushOn, setPushOn] = useState(false);
+    const [pushBusy, setPushBusy] = useState(false);
+    useEffect(() => { getPushSubscription().then(s => setPushOn(!!s)); }, []);
+
+    const togglePush = async () => {
+        setPushBusy(true);
+        try {
+            if (pushOn) {
+                await disablePush();
+                setPushOn(false);
+                toast.info('Background notifications turned off.');
+            } else {
+                await enablePush(user.id);
+                setPushOn(true);
+                toast.success('Background notifications on — you\'ll get ride alerts even when the app is closed.');
+            }
+        } catch (e) {
+            toast.error(e.message);
+        }
+        setPushBusy(false);
+    };
 
     const changePassword = async () => {
         if (pwd.next.length < 6) return toast.error('Password must be at least 6 characters.');
@@ -209,6 +233,25 @@ const Settings = () => {
                             active={settings.tourism_highlights} onToggle={() => toggle('tourism_highlights')} />
                         <ToggleRow label="Driver Fatigue Prompts" desc="AI-suggested break reminders"
                             active={settings.fatigue_prompts} onToggle={() => toggle('fatigue_prompts')} border={false} />
+                        {pushSupported() && (
+                            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '14px', marginTop: '4px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--dark)' }}>
+                                            Background Push Notifications
+                                            <span className="route-badge" style={{ background: '#ede9fe', color: '#6d28d9', fontSize: '9px', marginLeft: '8px' }}>NEW</span>
+                                        </div>
+                                        <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
+                                            Ride requests, driver updates & messages — even when the app is closed
+                                        </div>
+                                    </div>
+                                    <button className={`btn btn-sm ${pushOn ? 'btn-ghost' : 'btn-primary'}`} style={{ width: 'auto', flexShrink: 0 }}
+                                        onClick={togglePush} disabled={pushBusy}>
+                                        {pushBusy ? <i className="fas fa-spinner fa-spin"></i> : pushOn ? 'Turn Off' : 'Enable'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 

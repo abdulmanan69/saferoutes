@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useRideLive, ensureNotifyPermission } from '../context/RideLiveContext';
 import { geocodeOne, getRoutes, haversineKm } from '../utils/geo';
 import LocationInput from '../components/LocationInput/LocationInput';
 import RouteMap from '../components/RouteMap/RouteMap';
@@ -17,220 +18,6 @@ const STATUS_STYLE = {
     accepted: { color: '#2563eb', icon: 'fa-car-side', label: 'Driver on the way' },
     completed: { color: '#10b981', icon: 'fa-circle-check', label: 'Completed' },
     cancelled: { color: '#ef4444', icon: 'fa-ban', label: 'Cancelled' }
-};
-
-/* ============================================================
-   In-app voice calls: WebRTC peer-to-peer audio, signaled over
-   Supabase Realtime broadcast channels (no extra service).
-   ============================================================ */
-const RTC_CONFIG = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
-
-const useVoiceCall = (rides, user, myName, toast) => {
-    const [call, setCall] = useState({ state: 'idle' }); // idle|calling|ringing|active
-    const pcRef = useRef(null);
-    const streamRef = useRef(null);
-    const audioRef = useRef(null);
-    const chansRef = useRef({});
-    const pendingIce = useRef([]);
-    const offerRef = useRef(null);
-    const callRef = useRef(call);
-    useEffect(() => { callRef.current = call; }, [call]);
-
-    const send = useCallback((rideId, event, payload = {}) => {
-        chansRef.current[rideId]?.send({ type: 'broadcast', event, payload: { ...payload, from: user?.id } });
-    }, [user]);
-
-    const cleanup = useCallback(() => {
-        try { pcRef.current?.close(); } catch { /* already closed */ }
-        pcRef.current = null;
-        streamRef.current?.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
-        pendingIce.current = [];
-        offerRef.current = null;
-        setCall({ state: 'idle' });
-    }, []);
-
-    const hangup = useCallback(() => {
-        const c = callRef.current;
-        if (c.ride) send(c.ride.id, 'call-end');
-        cleanup();
-    }, [send, cleanup]);
-
-    const makePc = useCallback((rideId) => {
-        const pc = new RTCPeerConnection(RTC_CONFIG);
-        pc.onicecandidate = (e) => e.candidate && send(rideId, 'call-ice', { candidate: e.candidate.toJSON() });
-        pc.ontrack = (e) => {
-            if (audioRef.current) {
-                audioRef.current.srcObject = e.streams[0];
-                audioRef.current.play().catch(() => {});
-            }
-        };
-        pc.onconnectionstatechange = () => {
-            if (['failed', 'disconnected'].includes(pc.connectionState)) cleanup();
-        };
-        pcRef.current = pc;
-        return pc;
-    }, [send, cleanup]);
-
-    const mic = async () => {
-        const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-        streamRef.current = s;
-        return s;
-    };
-
-    const flushIce = async () => {
-        for (const c of pendingIce.current) {
-            try { await pcRef.current?.addIceCandidate(c); } catch { /* stale candidate */ }
-        }
-        pendingIce.current = [];
-    };
-
-    const startCall = useCallback(async (ride, peerName) => {
-        if (callRef.current.state !== 'idle') return;
-        try {
-            const s = await mic();
-            const pc = makePc(ride.id);
-            s.getTracks().forEach(t => pc.addTrack(t, s));
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            send(ride.id, 'call-offer', { sdp: offer, name: myName });
-            setCall({ state: 'calling', ride, peerName, muted: false });
-        } catch {
-            toast.error('Microphone unavailable. Allow mic access (needs HTTPS or localhost).');
-            cleanup();
-        }
-    }, [makePc, send, myName, toast, cleanup]);
-
-    const acceptCall = useCallback(async () => {
-        const { ride } = callRef.current;
-        const offer = offerRef.current;
-        if (!ride || !offer) return;
-        try {
-            const s = await mic();
-            const pc = makePc(ride.id);
-            s.getTracks().forEach(t => pc.addTrack(t, s));
-            await pc.setRemoteDescription(offer);
-            await flushIce();
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            send(ride.id, 'call-answer', { sdp: answer });
-            setCall(c => ({ ...c, state: 'active', muted: false, startedAt: Date.now() }));
-        } catch {
-            toast.error('Could not start audio. Allow mic access (needs HTTPS or localhost).');
-            hangup();
-        }
-    }, [makePc, send, toast, hangup]);
-
-    const toggleMute = useCallback(() => {
-        const track = streamRef.current?.getAudioTracks()[0];
-        if (!track) return;
-        track.enabled = !track.enabled;
-        setCall(c => ({ ...c, muted: !track.enabled }));
-    }, []);
-
-    // Subscribe a signaling channel per active ride I'm part of.
-    useEffect(() => {
-        if (!user) return;
-        const mine = rides.filter(r => r.status === 'accepted' && (r.customer_id === user.id || r.driver_id === user.id));
-        mine.forEach(r => {
-            if (chansRef.current[r.id]) return;
-            const ch = supabase.channel(`call-${r.id}`)
-                .on('broadcast', { event: 'call-offer' }, ({ payload }) => {
-                    if (payload.from === user.id) return;
-                    if (callRef.current.state !== 'idle') { send(r.id, 'call-end'); return; } // busy
-                    offerRef.current = payload.sdp;
-                    setCall({ state: 'ringing', ride: r, peerName: payload.name || 'Caller' });
-                })
-                .on('broadcast', { event: 'call-answer' }, async ({ payload }) => {
-                    if (payload.from === user.id || !pcRef.current) return;
-                    try {
-                        await pcRef.current.setRemoteDescription(payload.sdp);
-                        await flushIce();
-                        setCall(c => ({ ...c, state: 'active', startedAt: Date.now() }));
-                    } catch { cleanup(); }
-                })
-                .on('broadcast', { event: 'call-ice' }, async ({ payload }) => {
-                    if (payload.from === user.id) return;
-                    if (pcRef.current?.remoteDescription) {
-                        try { await pcRef.current.addIceCandidate(payload.candidate); } catch { /* ignore */ }
-                    } else pendingIce.current.push(payload.candidate);
-                })
-                .on('broadcast', { event: 'call-end' }, ({ payload }) => {
-                    if (payload.from === user.id) return;
-                    if (callRef.current.state !== 'idle') {
-                        toast.info('Call ended.');
-                        cleanup();
-                    }
-                })
-                .subscribe();
-            chansRef.current[r.id] = ch;
-        });
-        // Drop channels for rides no longer active
-        Object.keys(chansRef.current).forEach(id => {
-            if (!mine.some(r => r.id === id)) {
-                supabase.removeChannel(chansRef.current[id]);
-                delete chansRef.current[id];
-            }
-        });
-    }, [rides, user, send, cleanup, toast]);
-
-    // Teardown on unmount
-    useEffect(() => () => {
-        cleanup();
-        Object.values(chansRef.current).forEach(ch => supabase.removeChannel(ch));
-        chansRef.current = {};
-    }, [cleanup]);
-
-    return { call, startCall, acceptCall, hangup, toggleMute, audioRef };
-};
-
-/* Floating call bar (ring / dialing / live call controls) */
-const CallBar = ({ call, onAccept, onHangup, onMute, audioRef }) => {
-    const [, tick] = useState(0);
-    useEffect(() => {
-        if (call.state !== 'active') return;
-        const t = setInterval(() => tick(x => x + 1), 1000);
-        return () => clearInterval(t);
-    }, [call.state]);
-
-    if (call.state === 'idle') return <audio ref={audioRef} autoPlay style={{ display: 'none' }} />;
-
-    const secs = call.startedAt ? Math.floor((Date.now() - call.startedAt) / 1000) : 0;
-    const mmss = `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
-
-    return (
-        <div className="call-bar">
-            <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
-            <div className="call-info">
-                <i className={`fas ${call.state === 'ringing' ? 'fa-phone-volume ringing' : 'fa-phone'}`}></i>
-                <div>
-                    <div style={{ fontWeight: 700, fontSize: '14px' }}>
-                        {call.state === 'ringing' ? `${call.peerName} is calling…`
-                            : call.state === 'calling' ? `Calling ${call.peerName || ''}…`
-                                : `In call · ${mmss}`}
-                    </div>
-                    <div style={{ fontSize: '11px', opacity: 0.8 }}>
-                        {call.ride?.pickup} → {call.ride?.destination}
-                    </div>
-                </div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-                {call.state === 'ringing' && (
-                    <button className="call-btn accept" onClick={onAccept} title="Answer">
-                        <i className="fas fa-phone"></i>
-                    </button>
-                )}
-                {call.state === 'active' && (
-                    <button className={`call-btn ${call.muted ? 'muted' : ''}`} onClick={onMute} title={call.muted ? 'Unmute' : 'Mute'}>
-                        <i className={`fas ${call.muted ? 'fa-microphone-slash' : 'fa-microphone'}`}></i>
-                    </button>
-                )}
-                <button className="call-btn end" onClick={onHangup} title={call.state === 'ringing' ? 'Decline' : 'Hang up'}>
-                    <i className="fas fa-phone-slash"></i>
-                </button>
-            </div>
-        </div>
-    );
 };
 
 const RideRow = ({ ride, who, actions }) => {
@@ -274,7 +61,6 @@ const RideModal = ({ ride, meId, names, onClose, onCall }) => {
     const etaMin = driverPos && pickupPos && ride.status === 'accepted'
         ? Math.max(1, Math.round((haversineKm(driverPos, pickupPos) / 30) * 60)) : null;
 
-    // Load history + live-subscribe to new messages for this ride.
     useEffect(() => {
         let active = true;
         supabase.from('ride_messages').select('*').eq('ride_id', ride.id).order('created_at')
@@ -308,7 +94,6 @@ const RideModal = ({ ride, meId, names, onClose, onCall }) => {
 
     return (
         <Modal open onClose={onClose} title={`${ride.pickup} → ${ride.destination}`} icon="fa-taxi" width={620}>
-            {/* Live map */}
             <div style={{ borderRadius: '12px', overflow: 'hidden', marginBottom: '10px' }}>
                 <RouteMap start={pickupPos} end={destPos} current={driverPos} height={230} zoom={11} />
             </div>
@@ -335,7 +120,6 @@ const RideModal = ({ ride, meId, names, onClose, onCall }) => {
                 </span>
             </div>
 
-            {/* Chat */}
             <div className="chat-box">
                 <div className="chat-list" ref={listRef}>
                     {msgs.length === 0 && (
@@ -366,14 +150,9 @@ const RideModal = ({ ride, meId, names, onClose, onCall }) => {
 const Rides = () => {
     const { user, profile } = useAuth();
     const toast = useToast();
-    const isDriver = profile?.user_type === 'driver';
+    const { rides, setRides, names, loading, isDriver, startCall } = useRideLive();
 
-    const [rides, setRides] = useState([]);
-    const [names, setNames] = useState({});
-    const [loading, setLoading] = useState(true);
-    const [openRide, setOpenRide] = useState(null); // ride id shown in modal
-
-    // booking form (customer)
+    const [openRide, setOpenRide] = useState(null);
     const [pickup, setPickup] = useState('');
     const [dest, setDest] = useState('');
     const [quote, setQuote] = useState(null);
@@ -382,55 +161,6 @@ const Rides = () => {
     const [cancelId, setCancelId] = useState(null);
     const [busy, setBusy] = useState(false);
 
-    const { call, startCall, acceptCall, hangup, toggleMute, audioRef } =
-        useVoiceCall(rides, user, profile?.full_name?.split(' ')[0] || 'SafeRoute user', toast);
-
-    const load = useCallback(async () => {
-        const { data } = await supabase.from('rides').select('*').order('created_at', { ascending: false });
-        setRides(data || []);
-        setLoading(false);
-    }, []);
-    useEffect(() => { load(); }, [load]);
-
-    // Resolve names for any user ids we haven't seen yet.
-    useEffect(() => {
-        const ids = [...new Set(rides.flatMap(r => [r.customer_id, r.driver_id]).filter(Boolean))]
-            .filter(id => !(id in names));
-        if (!ids.length) return;
-        supabase.from('profiles').select('id, full_name').in('id', ids).then(({ data }) => {
-            if (data?.length) setNames(prev => ({ ...prev, ...Object.fromEntries(data.map(p => [p.id, p.full_name || 'User'])) }));
-        });
-    }, [rides, names]);
-
-    /* ---------- REALTIME: rides appear & update instantly ---------- */
-    useEffect(() => {
-        const ch = supabase.channel('rides-live')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, (payload) => {
-                setRides(prev => {
-                    if (payload.eventType === 'INSERT') {
-                        if (prev.some(r => r.id === payload.new.id)) return prev;
-                        return [payload.new, ...prev];
-                    }
-                    if (payload.eventType === 'UPDATE')
-                        return prev.map(r => r.id === payload.new.id ? { ...r, ...payload.new } : r);
-                    if (payload.eventType === 'DELETE')
-                        return prev.filter(r => r.id !== payload.old.id);
-                    return prev;
-                });
-                // Push-style notifications for the interesting transitions
-                if (payload.eventType === 'INSERT' && payload.new.customer_id !== user?.id && isDriver)
-                    toast.info(`🚕 New ride request: ${payload.new.pickup} → ${payload.new.destination}`);
-                if (payload.eventType === 'UPDATE' && payload.new.customer_id === user?.id) {
-                    if (payload.old?.status === 'requested' && payload.new.status === 'accepted')
-                        toast.success('A driver accepted your ride! Track them live.');
-                    if (payload.old?.status === 'accepted' && payload.new.status === 'completed')
-                        toast.success('Ride completed — thanks for riding with SafeRoute!');
-                }
-            })
-            .subscribe();
-        return () => supabase.removeChannel(ch);
-    }, [user, isDriver, toast]);
-
     /* ---------- DRIVER: share live GPS while on an active ride ---------- */
     const activeJobIds = rides.filter(r => r.driver_id === user?.id && r.status === 'accepted').map(r => r.id).join(',');
     useEffect(() => {
@@ -438,7 +168,7 @@ const Rides = () => {
         let last = 0;
         const watch = navigator.geolocation.watchPosition(pos => {
             const now = Date.now();
-            if (now - last < 5000) return; // throttle to one update / 5s
+            if (now - last < 5000) return;
             last = now;
             const patch = {
                 driver_lat: pos.coords.latitude,
@@ -452,7 +182,7 @@ const Rides = () => {
         return () => navigator.geolocation.clearWatch(watch);
     }, [isDriver, activeJobIds]);
 
-    /* ---------- customer: quote + book (stores real coordinates for tracking) ---------- */
+    /* ---------- customer: quote + book ---------- */
     const getQuote = async () => {
         if (!pickup.trim() || !dest.trim()) return toast.warning('Enter both pickup and destination.');
         setQuoting(true);
@@ -467,6 +197,7 @@ const Rides = () => {
 
     const bookRide = async () => {
         if (!quote) return;
+        ensureNotifyPermission();
         setBooking(true);
         const { data, error } = await supabase.from('rides').insert({
             customer_id: user.id,
@@ -498,9 +229,10 @@ const Rides = () => {
 
     /* ---------- driver: accept + complete ---------- */
     const acceptRide = async (ride) => {
+        ensureNotifyPermission();
         const { error } = await supabase.from('rides')
             .update({ driver_id: user.id, status: 'accepted', updated_at: new Date().toISOString() })
-            .eq('id', ride.id).eq('status', 'requested'); // race-safe
+            .eq('id', ride.id).eq('status', 'requested');
         if (error) return toast.error(error.message);
         setRides(prev => prev.map(r => r.id === ride.id ? { ...r, driver_id: user.id, status: 'accepted' } : r));
         toast.success('Ride accepted — your live location is now shared with the customer.');
@@ -537,11 +269,10 @@ const Rides = () => {
                 <h1>{isDriver ? 'Driver Hub' : 'Book a Ride'}</h1>
                 <p>{isDriver
                     ? 'Requests arrive in realtime — accept, drive, chat, and earn'
-                    : 'Up-front pricing, live driver tracking, and in-ride chat'}</p>
+                    : 'Up-front pricing, live driver tracking, and in-ride chat & calls'}</p>
             </div>
 
             {isDriver ? (
-                /* ================= DRIVER VIEW ================= */
                 <>
                     <div className="kpi-row">
                         {[
@@ -615,7 +346,6 @@ const Rides = () => {
                     </div>
                 </>
             ) : (
-                /* ================= CUSTOMER VIEW ================= */
                 <div className="grid">
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
                         <div className="card fade-in">
@@ -697,8 +427,8 @@ const Rides = () => {
                                 ['fa-calculator', 'Get an up-front fare from real road distance — no surprises.'],
                                 ['fa-taxi', 'Request the ride; drivers see it instantly (realtime).'],
                                 ['fa-location-crosshairs', 'Once accepted, track your driver live on the map with ETA.'],
-                                ['fa-comments', 'Chat with your driver in-app, or call them directly.'],
-                                ['fa-flag-checkered', 'Pay the shown fare on arrival. Cash, simple.'],
+                                ['fa-comments', 'Chat in-app, call in-app, or phone them directly.'],
+                                ['fa-bell', 'Enable push in Settings to get alerts even when the app is closed.'],
                                 ['fa-id-badge', 'Want to earn instead? Switch to a Driver account in your Profile.']
                             ].map(([ic, t]) => (
                                 <div key={t} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
@@ -714,8 +444,6 @@ const Rides = () => {
                 <RideModal ride={modalRide} meId={user?.id} names={names} onClose={() => setOpenRide(null)}
                     onCall={(r, peerName) => startCall(r, peerName)} />
             )}
-
-            <CallBar call={call} onAccept={acceptCall} onHangup={hangup} onMute={toggleMute} audioRef={audioRef} />
 
             <ConfirmDialog
                 open={!!cancelId}
