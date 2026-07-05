@@ -1,0 +1,44 @@
+{
+    "name": "SafeRoute — Smart Road Trip Planner",
+    "short_name": "SafeRoute",
+    "description": "AI-powered road-trip planner with live journey tracking, real routes, safety risk analysis, weather outfit advice and tourism.",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#15182a",
+    "theme_color": "#7c5cfc",
+    "categories": ["travel", "navigation", "utilities"],
+    "icons": [
+        {
+            "src": "/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Start Journey",
+            "url": "/journey",
+            "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+        },
+        {
+            "name": "Plan New Trip",
+            "url": "/new-trip",
+            "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+        }
+    ]
+}
